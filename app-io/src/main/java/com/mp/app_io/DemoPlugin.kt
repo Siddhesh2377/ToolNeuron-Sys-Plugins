@@ -1,6 +1,7 @@
 package com.mp.app_io
 
 import android.annotation.SuppressLint
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -8,7 +9,6 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
-import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -26,29 +26,26 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.dark.plugins.engine.PluginApi
 import com.dark.plugins.engine.PluginInfo
-import com.dark.plugins.sys.plugins.AppInfo
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
 
 class AppIoPlugin(private val ctx: Context) : PluginApi(ctx) {
 
@@ -58,133 +55,36 @@ class AppIoPlugin(private val ctx: Context) : PluginApi(ctx) {
 
     @Composable
     override fun AppContent() {
-        AppListScreen(ctx, onLaunch = { pkg ->
-            // Try to launch directly
-            val pm = ctx.packageManager
-            val intent = pm.getLaunchIntentForPackage(pkg)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                try {
-                    ctx.startActivity(intent)
-                } catch (_: Throwable) { /* ignore */
-                }
-            } else {
-                // Fallback to host AppIO plugin if available
-                runCatching {
-                    val payload = JSONObject().apply {
-                        put("tasks", org.json.JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("task", "open")
-                                put("packageName", pkg)
-                            })
-                        })
-                    }
-                    callPlugin("AppIOPlugin", payload)
-                }
+        val context = LocalContext.current.applicationContext
+        val owner = checkNotNull(LocalViewModelStoreOwner.current)
+
+        val factory = viewModelFactory {
+            initializer {
+                AppIoViewModel(context as Application)
             }
-        })
+        }
+        val vm = viewModel<AppIoViewModel>(
+            viewModelStoreOwner = owner,
+            factory = factory
+        )
+        LaunchedEffect(Unit) {
+            vm.loadApps()
+        }
+
+        AppListScreen(
+            query = vm.query.collectAsState().value,
+            showSystem = vm.showSystem.collectAsState().value,
+            apps = vm.filteredApps.collectAsState().value,
+            onQueryChange = vm::setQuery,
+            onToggleSystem = vm::setShowSystem,
+            onLaunch = vm::launchApp
+        )
     }
 }
-
-// ---------------- UI ----------------
 
 data class AppEntry(
     val label: String, val packageName: String, val icon: ImageBitmap?, val isSystem: Boolean
 )
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AppListScreen(context: Context, onLaunch: (String) -> Unit) {
-    var query by remember { mutableStateOf("") }
-    var showSystem by remember { mutableStateOf(false) }
-
-    val allApps by produceState(initialValue = emptyList(), context) {
-        value = listAppsTask(context)
-    }
-
-    val filtered = remember(allApps, query, showSystem) {
-        val q = query.trim().lowercase()
-        allApps.asSequence().filter { showSystem || !it.isSystem }.filter {
-                q.isEmpty() || it.label.lowercase().contains(q) || it.packageName.lowercase()
-                    .contains(q)
-            }.sortedBy { it.label.lowercase() }.toList()
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp)
-    ) {
-        Text(
-            text = "Installed apps",
-            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("Search") })
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(top = 8.dp)
-        ) {
-            Checkbox(checked = showSystem, onCheckedChange = { showSystem = it })
-            Text("Show system apps")
-        }
-        Spacer(Modifier.height(8.dp))
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(filtered, key = { it.packageName }) { app ->
-                AppRow(app = app, onLaunch = onLaunch)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppRow(app: AppEntry, onLaunch: (String) -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (app.icon != null) {
-                    Image(
-                        bitmap = app.icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(42.dp)
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    ) {}
-                }
-                Column(modifier = Modifier.padding(start = 12.dp)) {
-                    Text(app.label, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        app.packageName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            TextButton(onClick = { onLaunch(app.packageName) }) { Text("Open") }
-        }
-    }
-}
 
 // ---------------- data / helpers ----------------
 
@@ -248,4 +148,89 @@ private fun drawableToBitmap(drawable: Drawable): Bitmap {
     drawable.setBounds(0, 0, c.width, c.height)
     drawable.draw(c)
     return bmp
+}
+
+
+@Composable
+private fun AppRow(app: AppEntry, onLaunch: (String) -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (app.icon != null) {
+                    Image(
+                        bitmap = app.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(42.dp)
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {}
+                }
+                Column(modifier = Modifier.padding(start = 12.dp)) {
+                    Text(app.label, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        app.packageName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            TextButton(onClick = { onLaunch(app.packageName) }) { Text("Open") }
+        }
+    }
+}
+
+@Composable
+fun AppListScreen(
+    query: String,
+    showSystem: Boolean,
+    apps: List<AppEntry>,
+    onQueryChange: (String) -> Unit,
+    onToggleSystem: (Boolean) -> Unit,
+    onLaunch: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Installed apps",
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+        )
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Search") })
+        Row(
+            verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)
+        ) {
+            Checkbox(checked = showSystem, onCheckedChange = onToggleSystem)
+            Text("Show system apps")
+        }
+        Spacer(Modifier.height(8.dp))
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            items(apps, key = { it.packageName }) { app ->
+                AppRow(app = app, onLaunch = onLaunch)
+            }
+        }
+    }
 }

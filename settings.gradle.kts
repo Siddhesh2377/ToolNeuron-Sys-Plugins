@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 rootProject.name = "Macro-Plugin-Compose"
 include(":demo-macro")
 include(":app-io")
+include(":ai-chat")
