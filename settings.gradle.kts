@@ -19,7 +19,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Macro-Plugin-Compose"
+rootProject.name = "Neuro-V-Sys-Plugins"
 include(":demo-macro")
 include(":app-io")
 include(":ai-chat")
