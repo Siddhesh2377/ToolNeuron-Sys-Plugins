@@ -148,15 +148,7 @@ fun ChattingScreen(pluginApi: PluginApi) {
         }
 
     Scaffold(
-        topBar = {
-            Text(
-                "AI Chat",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(rDP(16.dp)),
-                style = MaterialTheme.typography.headlineSmall
-            )
-        }, modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize()
     ) { pad ->
         Column(
             Modifier
@@ -167,8 +159,7 @@ fun ChattingScreen(pluginApi: PluginApi) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(pad)
-                    .padding(horizontal = rDP(12.dp)),
+                    .padding(pad),
                 verticalArrangement = Arrangement.spacedBy(rDP(10.dp))
             ) {
                 items(messages.size) { idx ->
