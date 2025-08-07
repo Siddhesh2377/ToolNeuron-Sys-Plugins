@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -16,6 +15,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,21 +50,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dark.plugins.engine.PluginApi
 import com.dark.plugins.ui.theme.rDP
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /**
  * Ultra-light ChatViewModel that you can replace with your own ChattingViewModel.
  */
-class ChatViewModel(context: Context) : ViewModel() {
+class ChatViewModel(context: Context, val pluginApi: PluginApi) : ViewModel() {
     private val _messages = MutableStateFlow(listOf<Message>())
     val messages = _messages.asStateFlow()
 
@@ -82,14 +86,32 @@ class ChatViewModel(context: Context) : ViewModel() {
     private fun generateEcho(src: String) {
         viewModelScope.launch {
             _isGenerating.value = true
-            delay(350)
-            _messages.value += Message(
-                ROLE.SYSTEM, "Echo: $src",
-                timeStamp = "TIME",
+
+            // 1️⃣  add an empty assistant bubble and remember where it is
+            val assistantIdx = _messages.value.size
+            _messages.value += Message(ROLE.SYSTEM, "", timeStamp = "TIME")
+
+            // 2️⃣  stream the reply, extending that bubble
+            pluginApi.aiCall(
+                JSONObject(mapOf("user" to src)),
+                onToken = { token ->
+                    // hop back to main if the callback isn’t already there
+                    viewModelScope.launch {
+                        _messages.update { old ->
+                            old.toMutableList().apply {
+                                val current = this[assistantIdx]
+                                this[assistantIdx] =
+                                    current.copy(content = current.content + token)
+                            }
+                        }
+                    }
+                }
             )
+
             _isGenerating.value = false
         }
     }
+
 
     fun stop() {
         _isGenerating.value = false
@@ -108,9 +130,9 @@ class ChatViewModel(context: Context) : ViewModel() {
 //  Main Composable – drop-in replacement for your old ChattingScreen()
 // ---------------------------------------------------------------------
 @Composable
-fun ChattingScreen() {
+fun ChattingScreen(pluginApi: PluginApi) {
     val context = LocalContext.current
-    val viewModel: ChatViewModel = remember { ChatViewModel(context) }
+    val viewModel: ChatViewModel = remember { ChatViewModel(context, pluginApi) }
     rememberCoroutineScope()
     val messages by viewModel.messages.collectAsState()
     val isGenerating by viewModel.isGenerating.collectAsState()
@@ -127,41 +149,49 @@ fun ChattingScreen() {
 
     Scaffold(
         topBar = {
-        Text(
-            "AI Chat",
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(rDP(16.dp)),
-            style = MaterialTheme.typography.headlineSmall
-        )
-    }, bottomBar = {
-        BottomBarContent(
-            text = input,
-            onTextChange = { input = it },
-            attachments = files,
-            isGenerating = isGenerating,
-            onAttach = { picker.launch("*/*") },
-            onSend = {
-                if (isGenerating) viewModel.stop() else if (input.isNotBlank()) {
-                    viewModel.send(input.trim())
-                    input = ""
-                }
-            },
-            onRemove = viewModel::clearAttachment
-        )
-    }, modifier = Modifier.fillMaxSize()
+            Text(
+                "AI Chat",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(rDP(16.dp)),
+                style = MaterialTheme.typography.headlineSmall
+            )
+        }, modifier = Modifier.fillMaxSize()
     ) { pad ->
-        LazyColumn(
-            modifier = Modifier
+        Column(
+            Modifier
                 .fillMaxSize()
-                .padding(pad)
-                .padding(horizontal = rDP(12.dp)),
-            verticalArrangement = Arrangement.spacedBy(rDP(10.dp))
+                .imePadding()
         ) {
-            items(messages.size) { idx ->
-                ChatBubble(msg = messages[idx])
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(pad)
+                    .padding(horizontal = rDP(12.dp)),
+                verticalArrangement = Arrangement.spacedBy(rDP(10.dp))
+            ) {
+                items(messages.size) { idx ->
+                    ChatBubble(msg = messages[idx])
+                }
             }
+
+            BottomBarContent(
+                text = input,
+                onTextChange = { input = it },
+                attachments = files,
+                isGenerating = isGenerating,
+                onAttach = { picker.launch("*/*") },
+                onSend = {
+                    if (isGenerating) viewModel.stop() else if (input.isNotBlank()) {
+                        viewModel.send(input.trim())
+                        input = ""
+                    }
+                },
+                onRemove = viewModel::clearAttachment
+            )
         }
+
     }
 }
 
@@ -172,15 +202,37 @@ fun ChattingScreen() {
 private fun ChatBubble(msg: Message) {
     val isUser = msg.role == ROLE.USER
     val think = msg.content.startsWith("<think>")
-    val content = msg.content.removePrefix("<think>").removeSuffix("</think>")
 
+    val raw = msg.content.trim()
+    val cleanThinking = remember(raw) {
+        if (think) {
+            val withoutOpen = raw.removePrefix("<think>").trimStart()
+            if (withoutOpen.endsWith("</think>")) {
+                withoutOpen.removeSuffix("</think>").trimEnd()
+            } else {
+                withoutOpen
+            }
+        } else ""
+    }
+
+    val actualResponse = remember(raw) {
+        if (think && raw.contains("</think>")) {
+            // Extract actual response that comes after </think>
+            raw.substringAfter("</think>").trimStart()
+        } else if (!think) {
+            // Normal system message
+            raw
+        } else {
+            "" // if still thinking and no closing tag yet
+        }
+    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
-        if (think) ThinkingChip(isUser) else Unit
+        if (think) ThinkingBubble(msg.copy(content = cleanThinking)) else Unit
         MarkdownText(
-            text = content.trim(),
+            text = actualResponse.trim(),
             style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif),
             modifier = Modifier
                 .then(
@@ -195,20 +247,45 @@ private fun ChatBubble(msg: Message) {
 }
 
 @Composable
-private fun ThinkingChip(user: Boolean) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+fun ThinkingBubble(message: Message) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(
         modifier = Modifier
-            .clickable { }
-            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
-            .padding(rDP(6.dp))) {
-        Icon(
-            imageVector = if (user) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
-            contentDescription = null,
-            modifier = Modifier.size(rDP(14.dp))
-        )
-        Spacer(Modifier.width(rDP(6.dp)))
-        Text("AI is thinking…", style = MaterialTheme.typography.labelMedium)
+            .fillMaxWidth()
+            .padding(horizontal = rDP(16.dp))
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clickable { expanded = !expanded }
+                .background(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.medium
+                )
+                .padding(rDP(10.dp))) {
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = "Expand",
+                modifier = Modifier.size(rDP(16.dp))
+            )
+            Spacer(modifier = Modifier.width(rDP(8.dp)))
+            Text(
+                text = if (expanded) "AI Reasoning (tap to hide)" else "AI is thinking...",
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
+
+        AnimatedVisibility(visible = expanded) {
+            MarkdownText(
+                text = message.content,
+                canCopy = message.role != ROLE.USER,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(rDP(12.dp))
+            )
+        }
     }
 }
 
@@ -239,23 +316,40 @@ private fun BottomBarContent(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = rDP(16.dp))
                 .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.primary)
-                .padding(rDP(6.dp)),
+                .background(color = MaterialTheme.colorScheme.primary)
+                .heightIn(max = 400.dp)
+                .padding(vertical = rDP(8.dp))
+                .padding(start = rDP(12.dp), end = rDP(10.dp)),
             verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(rDP(8.dp))
+            horizontalArrangement = Arrangement.spacedBy(rDP(10.dp))
         ) {
-            BasicTextField(
-                value = text,
-                onValueChange = onTextChange,
-                textStyle = MaterialTheme.typography.titleMedium.copy(color = MaterialTheme.colorScheme.onPrimary),
-                modifier = Modifier.weight(1f),
-                singleLine = false,
-                decorationBox = { inner ->
-                    if (text.isEmpty()) Text("Type…", color = Color.Gray)
-                    inner()
-                })
-
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(8.dp)
+            ) {
+                BasicTextField(
+                    value = text,
+                    textStyle = MaterialTheme.typography.titleMedium.copy(
+                        color = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    onValueChange = onTextChange,
+                    singleLine = false,
+                    decorationBox = { innerTextField ->
+                        if (text.isEmpty()) {
+                            Text(
+                                "Say Anything...",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Gray
+                            )
+                        }
+                        innerTextField()
+                    })
+            }
             Action(icon = Icons.Default.AttachFile, "Attach", onAttach)
             ActionProgress(icon = Icons.AutoMirrored.TwoTone.Send, "Send", isGenerating, onSend)
         }
@@ -281,8 +375,7 @@ private fun FileChip(f: FileAttachment, onRemove: () -> Unit) {
         Text(f.doc.name, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.width(rDP(4.dp)))
         if (f.isLoading) CircularProgressIndicator(
-            modifier = Modifier.size(rDP(12.dp)),
-            strokeWidth = rDP(2.dp)
+            modifier = Modifier.size(rDP(12.dp)), strokeWidth = rDP(2.dp)
         )
         else Icon(
             Icons.Default.ExpandMore,
@@ -310,16 +403,12 @@ private fun Action(icon: ImageVector, desc: String, onClick: () -> Unit) {
 
 @Composable
 private fun ActionProgress(
-    icon: ImageVector,
-    desc: String,
-    show: Boolean,
-    onClick: () -> Unit
+    icon: ImageVector, desc: String, show: Boolean, onClick: () -> Unit
 ) {
     Box(contentAlignment = Alignment.Center) {
         AnimatedVisibility(show) {
             CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.onPrimary,
-                strokeWidth = rDP(2.dp)
+                color = MaterialTheme.colorScheme.onPrimary, strokeWidth = rDP(2.dp)
             )
         }
         IconButton(
@@ -332,9 +421,7 @@ private fun ActionProgress(
         ) {
             AnimatedContent(show) { running ->
                 if (running) Icon(Icons.Default.Stop, desc) else Icon(
-                    icon,
-                    desc,
-                    modifier = Modifier.size(rDP(14.dp))
+                    icon, desc, modifier = Modifier.size(rDP(14.dp))
                 )
             }
         }

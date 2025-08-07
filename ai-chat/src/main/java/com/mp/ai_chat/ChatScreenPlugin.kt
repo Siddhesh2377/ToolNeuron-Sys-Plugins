@@ -16,6 +16,6 @@ class ChatScreenPlugin(context: Context): PluginApi(context) {
 
     @Composable
     override fun AppContent() {
-        ChattingScreen()
+        ChattingScreen(this)
     }
 }
