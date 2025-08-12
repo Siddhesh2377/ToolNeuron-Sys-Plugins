@@ -40,6 +40,10 @@ class AppIoViewModel(application: Application) : AndroidViewModel(application) {
             _allApps.value = listAppsTask(getApplication())
         }
     }
+    
+    fun getAppByName(appName: String): AppEntry? {
+        return _allApps.value.find { it.label.equals(appName, ignoreCase = true) }
+    }
 
     fun launchApp(packageName: String) {
         val context = getApplication<Application>()

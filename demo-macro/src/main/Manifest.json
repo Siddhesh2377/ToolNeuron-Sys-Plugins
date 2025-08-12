@@ -1,4 +1,4 @@
 {
   "name": "Macro-Demo",
-  "mainClass" : "com.mp.macro_plugin_compose.ui.DemoMacroPlugin"
+  "mainClass" : "com.mp.macro_plugin_compose.ui.UiActionPlugin"
 }

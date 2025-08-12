@@ -1,4 +1,17 @@
 {
   "name": "app-io",
-  "mainClass": "com.mp.app_io.AppIoPlugin"
+  "mainClass": "com.mp.app_io.AppIoPlugin",
+  "publicFun": [
+    {
+      "name": "getAppByName",
+      "parma": ["appName::String"],
+      "return": "String",
+      "path": "com.mp.app_io.AppIoViewModel."
+    },
+    {
+      "name": "launchApp",
+      "parma": ["appName::String"],
+      "return": "String"
+    }
+  ]
 }
