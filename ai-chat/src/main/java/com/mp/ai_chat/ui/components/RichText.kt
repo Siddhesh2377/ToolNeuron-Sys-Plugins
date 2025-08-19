@@ -1,4 +1,4 @@
-package com.mp.ai_chat
+package com.mp.ai_chat.ui.components
 
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme

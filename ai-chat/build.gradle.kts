@@ -28,6 +28,7 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -44,6 +45,11 @@ android {
 
 dependencies {
     compileOnly(files("libs/plugins-release.aar"))
+    implementation("org.jetbrains.kotlin:kotlin-stdlib")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-common")
+
+
 
     implementation(libs.androidx.core.ktx)
     implementation(platform(libs.androidx.compose.bom))

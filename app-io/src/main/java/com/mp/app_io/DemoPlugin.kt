@@ -44,8 +44,9 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.dark.plugins.engine.PluginApi
-import com.dark.plugins.engine.PluginInfo
+import com.dark.plugins.api.PluginApi
+import com.dark.plugins.api.PluginInfo
+
 
 class AppIoPlugin(private val ctx: Context) : PluginApi(ctx) {
 

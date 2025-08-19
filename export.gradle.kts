@@ -94,13 +94,19 @@ val makeDex = tasks.register<Exec>("makeDex") {
     }
 
     val classesJar = tmpDir.get().asFile.resolve("classes.jar")
+    val kotlinStdlibJar = configurations.named("releaseCompileClasspath").get()
+        .filter { it.name.startsWith("kotlin-stdlib") }
+        .firstOrNull()
+        ?: error("kotlin-stdlib not found in releaseCompileClasspath")
+
     commandLine(
         d8Exe.absolutePath,
         "--release",
         "--min-api", "26",
         "--lib", androidJarFile.absolutePath,
         "--output", dexOutDir.get().asFile.absolutePath,
-        classesJar.absolutePath
+        classesJar.absolutePath,
+        kotlinStdlibJar.absolutePath
     )
 
     doLast {
@@ -109,6 +115,7 @@ val makeDex = tasks.register<Exec>("makeDex") {
         println(">> d8 wrote: $dex")
     }
 }
+
 
 // -------------------------------------------------------------------------
 //  Task 3 – package plugin.dex.jar

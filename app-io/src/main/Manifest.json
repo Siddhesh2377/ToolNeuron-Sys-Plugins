@@ -1,6 +1,7 @@
 {
   "name": "app-io",
   "mainClass": "com.mp.app_io.AppIoPlugin",
+  "description": "This A Demo Plugin",
   "publicFun": [
     {
       "name": "getAppByName",

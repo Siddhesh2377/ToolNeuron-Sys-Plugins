@@ -13,9 +13,8 @@ import android.util.Log
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import com.dark.plugins.engine.ComposableBlock
-import com.dark.plugins.engine.PluginApi
-import com.dark.plugins.engine.PluginInfo
+import com.dark.plugins.api.PluginApi
+import com.dark.plugins.api.PluginInfo
 import com.dark.plugins.sys.uiAction.CommandBridgeService
 import com.dark.plugins.ui.theme.NeuroVersePluginTheme
 import org.json.JSONObject

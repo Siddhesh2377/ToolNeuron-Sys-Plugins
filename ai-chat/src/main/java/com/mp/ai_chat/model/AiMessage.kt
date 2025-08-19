@@ -1,4 +1,4 @@
-package com.mp.ai_chat
+package com.mp.ai_chat.model
 
 import kotlinx.serialization.Serializable
 import java.util.UUID

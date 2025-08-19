@@ -1,21 +1,28 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Keep the plugin class and everything in it
+-keep class com.mp.macro_plugin_compose.ui.UiActionPlugin {
+    public <init>(android.content.Context);
+    *;
+}
+-keep class com.dark.plugins.api.** { *; }
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Preserve the entire ComposePlugin interface and its implementations (including content())
+-keep interface com.dark.plugins.api.ComposePlugin { *; }
+-keepclassmembers class * implements com.dark.plugins.api.ComposePlugin {
+    * content(...);
+}
+-keepclassmembers class * implements com.dark.plugins.api.ComposePlugin {
+    public *** content(...);
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+-keepattributes *Annotation*
+-keep @androidx.annotation.Keep class * { *; }
+
+# In case PluginApi is referenced directly
+-keep class com.dark.plugins.api.PluginApi { *; }
+
+# Preserve Kotlin runtime as before
+-keep class kotlin.jvm.internal.** { *; }
+-dontwarn kotlin.jvm.internal.**
+-keep class kotlin.** { *; }
+-dontwarn kotlin.**

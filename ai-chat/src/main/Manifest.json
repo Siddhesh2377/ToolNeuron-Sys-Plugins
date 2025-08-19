@@ -1,4 +1,5 @@
 {
   "name": "AI Chat",
-  "mainClass": "com.mp.ai_chat.ChatScreenPlugin"
+  "mainClass": "com.mp.ai_chat.ChatScreenPlugin",
+  "description": "This A Demo Plugin"
 }

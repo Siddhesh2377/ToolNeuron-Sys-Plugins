@@ -1,6 +1,5 @@
-package com.mp.ai_chat
+package com.mp.ai_chat.ui.screens
 
-import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,107 +46,37 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.dark.plugins.engine.PluginApi
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.dark.plugins.api.PluginApi
 import com.dark.plugins.ui.theme.rDP
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import org.json.JSONObject
+import com.mp.ai_chat.model.FileAttachment
+import com.mp.ai_chat.model.Message
+import com.mp.ai_chat.model.ROLE
+import com.mp.ai_chat.ui.components.MarkdownText
+import com.mp.ai_chat.viewmodel.ChatViewModel
 
-/**
- * Ultra-light ChatViewModel that you can replace with your own ChattingViewModel.
- */
-class ChatViewModel(context: Context, val pluginApi: PluginApi) : ViewModel() {
-    private val _messages = MutableStateFlow(listOf<Message>())
-    val messages = _messages.asStateFlow()
-
-    private val _isGenerating = MutableStateFlow(false)
-    val isGenerating = _isGenerating.asStateFlow()
-
-    private val _attachedFiles = MutableStateFlow<List<FileAttachment>>(emptyList())
-    val attachedFiles = _attachedFiles.asStateFlow()
-
-    fun send(text: String) {
-        val userMsg = Message(ROLE.USER, text, timeStamp = "TIME")
-        _messages.value += userMsg
-        generateEcho(text)
-    }
-
-    private fun generateEcho(src: String) {
-        viewModelScope.launch {
-            _isGenerating.value = true
-
-            // 1️⃣  add an empty assistant bubble and remember where it is
-            val assistantIdx = _messages.value.size
-            _messages.value += Message(ROLE.SYSTEM, "", timeStamp = "TIME")
-
-            // 2️⃣  stream the reply, extending that bubble
-            pluginApi.aiCall(
-                JSONObject(mapOf("user" to src)),
-                onToken = { token ->
-                    // hop back to main if the callback isn’t already there
-                    viewModelScope.launch {
-                        _messages.update { old ->
-                            old.toMutableList().apply {
-                                val current = this[assistantIdx]
-                                this[assistantIdx] =
-                                    current.copy(content = current.content + token)
-                            }
-                        }
-                    }
-                }
-            )
-
-            _isGenerating.value = false
-        }
-    }
-
-
-    fun stop() {
-        _isGenerating.value = false
-    }
-
-    fun attach(file: FileAttachment) {
-        _attachedFiles.value += file
-    }
-
-    fun clearAttachment(idx: Int) {
-        _attachedFiles.value = _attachedFiles.value.toMutableList().also { it.removeAt(idx) }
-    }
-}
-
-// ---------------------------------------------------------------------
-//  Main Composable – drop-in replacement for your old ChattingScreen()
-// ---------------------------------------------------------------------
 @Composable
-fun ChattingScreen(pluginApi: PluginApi) {
-    val context = LocalContext.current
-    val viewModel: ChatViewModel = remember { ChatViewModel(context, pluginApi) }
-    rememberCoroutineScope()
-    val messages by viewModel.messages.collectAsState()
-    val isGenerating by viewModel.isGenerating.collectAsState()
-    val files by viewModel.attachedFiles.collectAsState()
+fun ChattingScreen(pluginApi: PluginApi, viewModel: ChatViewModel = viewModel(
+    factory = ChatViewModel.provideFactory(pluginApi)
+)) {
+    val messages by viewModel.messages.collectAsStateWithLifecycle()
+    val isGenerating by viewModel.isGenerating.collectAsStateWithLifecycle()
+    val files by viewModel.attachedFiles.collectAsStateWithLifecycle()
 
     var input by remember { mutableStateOf("") }
-    LocalContext.current
 
-    val picker =
-        rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-            uri ?: return@rememberLauncherForActivityResult
-            //viewModel.attach(FileAttachment(doc = uri, isLoading =  false))
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let {
+          //  viewModel.attach(FileAttachment(doc = it, isLoading = false))
         }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize()
@@ -176,7 +105,9 @@ fun ChattingScreen(pluginApi: PluginApi) {
                 isGenerating = isGenerating,
                 onAttach = { picker.launch("*/*") },
                 onSend = {
-                    if (isGenerating) viewModel.stop() else if (input.isNotBlank()) {
+                    if (isGenerating) {
+                        viewModel.stop()
+                    } else if (input.isNotBlank()) {
                         viewModel.send(input.trim())
                         input = ""
                     }
@@ -184,9 +115,9 @@ fun ChattingScreen(pluginApi: PluginApi) {
                 onRemove = viewModel::clearAttachment
             )
         }
-
     }
 }
+
 
 // ---------------------------------------------------------------------
 //  Chat bubble – user right, assistant left, thinking tag support
