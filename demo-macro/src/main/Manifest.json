@@ -1,5 +1,0 @@
-{
-  "name": "Macro-Demo",
-  "description": "This A Demo Plugin",
-  "mainClass" : "com.mp.macro_plugin_compose.ui.UiActionPlugin"
-}

@@ -12,7 +12,8 @@
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/ai-chat" />
             <option value="$PROJECT_DIR$/app-io" />
-            <option value="$PROJECT_DIR$/demo-macro" />
+            <option value="$PROJECT_DIR$/notifcation-io" />
+            <option value="$PROJECT_DIR$/web-searching" />
           </set>
         </option>
       </GradleProjectSettings>

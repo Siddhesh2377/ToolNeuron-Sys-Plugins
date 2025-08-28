@@ -7,48 +7,24 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.twotone.Send
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -63,38 +39,44 @@ import com.mp.ai_chat.ui.components.MarkdownText
 import com.mp.ai_chat.viewmodel.ChatViewModel
 
 @Composable
-fun ChattingScreen(pluginApi: PluginApi, viewModel: ChatViewModel = viewModel(
-    factory = ChatViewModel.provideFactory(pluginApi)
-)) {
+fun ChattingScreen(
+    pluginApi: PluginApi,
+    viewModel: ChatViewModel = viewModel(factory = ChatViewModel.provideFactory(pluginApi))
+) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isGenerating by viewModel.isGenerating.collectAsStateWithLifecycle()
     val files by viewModel.attachedFiles.collectAsStateWithLifecycle()
+    val liveAnswer by viewModel.liveAnswer.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
     var input by remember { mutableStateOf("") }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri?.let {
-          //  viewModel.attach(FileAttachment(doc = it, isLoading = false))
-        }
+        uri?.let { viewModel.handleFileUri(context, it) }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize()
-    ) { pad ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .imePadding()
-        ) {
+    val listState = rememberLazyListState()
+
+    // Auto-scroll on new messages / stream
+    LaunchedEffect(messages.size, liveAnswer) {
+        scrollToBottom(listState, messages.size, liveAnswer.isNotBlank())
+    }
+
+    Scaffold(modifier = Modifier.fillMaxSize()) { pad ->
+        Column(Modifier.fillMaxSize().imePadding()) {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(pad),
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(pad),
+                state = listState,
                 verticalArrangement = Arrangement.spacedBy(rDP(10.dp))
             ) {
-                items(messages.size) { idx ->
-                    ChatBubble(msg = messages[idx])
+                itemsIndexed(messages, key = { idx, msg -> msg.timeStamp + "-" + idx }) { _, m ->
+                    ChatBubble(msg = m)
+                }
+                // Ephemeral streaming bubble while generating
+                if (liveAnswer.isNotBlank()) {
+                    item(key = "live-bubble") {
+                        AssistantStreamingBubble(liveAnswer)
+                    }
                 }
             }
 
@@ -105,9 +87,7 @@ fun ChattingScreen(pluginApi: PluginApi, viewModel: ChatViewModel = viewModel(
                 isGenerating = isGenerating,
                 onAttach = { picker.launch("*/*") },
                 onSend = {
-                    if (isGenerating) {
-                        viewModel.stop()
-                    } else if (input.isNotBlank()) {
+                    if (isGenerating) viewModel.stop() else if (input.isNotBlank()) {
                         viewModel.send(input.trim())
                         input = ""
                     }
@@ -118,9 +98,13 @@ fun ChattingScreen(pluginApi: PluginApi, viewModel: ChatViewModel = viewModel(
     }
 }
 
+private suspend fun scrollToBottom(state: LazyListState, count: Int, hasLive: Boolean) {
+    val last = (count + if (hasLive) 1 else 0).coerceAtLeast(0)
+    if (last > 0) state.scrollToItem(last - 1)
+}
 
 // ---------------------------------------------------------------------
-//  Chat bubble – user right, assistant left, thinking tag support
+// Chat bubble — supports <think> ... </think> folding
 // ---------------------------------------------------------------------
 @Composable
 private fun ChatBubble(msg: Message) {
@@ -131,40 +115,40 @@ private fun ChatBubble(msg: Message) {
     val cleanThinking = remember(raw) {
         if (think) {
             val withoutOpen = raw.removePrefix("<think>").trimStart()
-            if (withoutOpen.endsWith("</think>")) {
-                withoutOpen.removeSuffix("</think>").trimEnd()
-            } else {
-                withoutOpen
-            }
+            if (withoutOpen.endsWith("</think>")) withoutOpen.removeSuffix("</think>").trimEnd() else withoutOpen
         } else ""
     }
 
     val actualResponse = remember(raw) {
-        if (think && raw.contains("</think>")) {
-            // Extract actual response that comes after </think>
-            raw.substringAfter("</think>").trimStart()
-        } else if (!think) {
-            // Normal system message
-            raw
-        } else {
-            "" // if still thinking and no closing tag yet
-        }
+        if (think && raw.contains("</think>")) raw.substringAfter("</think>").trimStart()
+        else if (!think) raw else ""
     }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
-        if (think) ThinkingBubble(msg.copy(content = cleanThinking)) else Unit
+        if (think) ThinkingBubble(msg.copy(content = cleanThinking))
         MarkdownText(
             text = actualResponse.trim(),
             style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif),
             modifier = Modifier
-                .then(
-                    if (isUser) Modifier.background(
-                        MaterialTheme.colorScheme.surface, MaterialTheme.shapes.large
-                    ) else Modifier
-                )
-                .widthIn(max = rDP(300.dp))
+                .then(if (isUser) Modifier.background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.large) else Modifier)
+                .widthIn(max = rDP(320.dp))
+                .padding(vertical = rDP(8.dp), horizontal = rDP(14.dp))
+        )
+    }
+}
+
+@Composable
+private fun AssistantStreamingBubble(live: String) {
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+        MarkdownText(
+            text = live,
+            style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif),
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.large)
+                .widthIn(max = rDP(320.dp))
                 .padding(vertical = rDP(8.dp), horizontal = rDP(14.dp))
         )
     }
@@ -173,48 +157,31 @@ private fun ChatBubble(msg: Message) {
 @Composable
 fun ThinkingBubble(message: Message) {
     var expanded by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = rDP(16.dp))
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = rDP(16.dp))) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .clickable { expanded = !expanded }
-                .background(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.medium
-                )
-                .padding(rDP(10.dp))) {
-            Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = "Expand",
-                modifier = Modifier.size(rDP(16.dp))
-            )
+                .background(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium)
+                .padding(rDP(10.dp))
+        ) {
+            Icon(imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null, modifier = Modifier.size(rDP(16.dp)))
             Spacer(modifier = Modifier.width(rDP(8.dp)))
-            Text(
-                text = if (expanded) "AI Reasoning (tap to hide)" else "AI is thinking...",
-                style = MaterialTheme.typography.labelMedium
-            )
+            Text(text = if (expanded) "AI Reasoning (tap to hide)" else "AI is thinking…", style = MaterialTheme.typography.labelMedium)
         }
-
         AnimatedVisibility(visible = expanded) {
             MarkdownText(
                 text = message.content,
                 canCopy = message.role != ROLE.USER,
                 style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(rDP(12.dp))
+                modifier = Modifier.fillMaxWidth().padding(rDP(12.dp))
             )
         }
     }
 }
 
 // ---------------------------------------------------------------------
-//  Bottom bar – attachments, stop / send button, progress overlay
+// Bottom bar — inline attachment chips + stop/send
 // ---------------------------------------------------------------------
 @Composable
 private fun BottomBarContent(
@@ -226,13 +193,12 @@ private fun BottomBarContent(
     onSend: () -> Unit,
     onRemove: (Int) -> Unit
 ) {
-    Column(
-        modifier = Modifier.padding(rDP(6.dp))
-    ) {
+    Column(modifier = Modifier.padding(rDP(6.dp))) {
+        // Inline chips row (above text field)
         AnimatedVisibility(attachments.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(rDP(6.dp))) {
-                items(attachments.size) { idx ->
-                    FileChip(attachments[idx]) { onRemove(idx) }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(rDP(6.dp)), modifier = Modifier.padding(horizontal = rDP(12.dp), vertical = rDP(4.dp))) {
+                itemsIndexed(attachments, key = { _, a -> a.id }) { idx, item ->
+                    FileChip(item, onRemove = { onRemove(idx) })
                 }
             }
         }
@@ -243,79 +209,87 @@ private fun BottomBarContent(
                 .padding(horizontal = rDP(16.dp))
                 .clip(MaterialTheme.shapes.medium)
                 .background(color = MaterialTheme.colorScheme.primary)
-                .heightIn(max = 400.dp)
+                .heightIn(max = 320.dp)
                 .padding(vertical = rDP(8.dp))
                 .padding(start = rDP(12.dp), end = rDP(10.dp)),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(rDP(10.dp))
         ) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(8.dp)
-            ) {
+            Box(modifier = Modifier.weight(1f).padding(8.dp)) {
                 BasicTextField(
                     value = text,
-                    textStyle = MaterialTheme.typography.titleMedium.copy(
-                        color = MaterialTheme.colorScheme.onPrimary
-                    ),
+                    textStyle = MaterialTheme.typography.titleMedium.copy(color = MaterialTheme.colorScheme.onPrimary),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.onPrimary),
                     onValueChange = onTextChange,
                     singleLine = false,
                     decorationBox = { innerTextField ->
                         if (text.isEmpty()) {
+                            val suffix = if (attachments.isNotEmpty()) "  •  Attached: ${attachments.size}" else ""
                             Text(
-                                "Say Anything...",
+                                "Say anything…$suffix",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontFamily = FontFamily.Serif,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.Gray
+                                color = Color(0xCCFFFFFF)
                             )
                         }
                         innerTextField()
-                    })
+                    }
+                )
             }
-            Action(icon = Icons.Default.AttachFile, "Attach", onAttach)
-            ActionProgress(icon = Icons.AutoMirrored.TwoTone.Send, "Send", isGenerating, onSend)
+            Action(icon = Icons.Default.AttachFile, desc = "Attach", onClick = onAttach)
+            ActionProgress(icon = Icons.AutoMirrored.TwoTone.Send, desc = if (isGenerating) "Stop" else "Send", show = isGenerating, onClick = onSend)
         }
     }
 }
 
 @Composable
 private fun FileChip(f: FileAttachment, onRemove: () -> Unit) {
+    var showPreview by remember { mutableStateOf(false) }
+    val type = if (f.doc.type.isNullOrEmpty()) "file" else f.doc.type.lowercase()
+    val icon = when {
+        type.contains("pdf") -> Icons.Default.PictureAsPdf
+        type.contains("doc") || type.contains("word") -> Icons.Default.Description
+        type.contains("xls") || type.contains("sheet") -> Icons.Default.TableChart
+        type.contains("ppt") -> Icons.Default.Slideshow
+        else -> Icons.Default.InsertDriveFile
+    }
+
     Row(
         modifier = Modifier
-            .background(
-                MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small
-            )
-            .padding(horizontal = rDP(8.dp), vertical = rDP(4.dp)),
+            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small)
+            .clickable(enabled = !f.isLoading) { showPreview = true }
+            .padding(horizontal = rDP(8.dp), vertical = rDP(6.dp)),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            Icons.Default.AttachFile,
-            contentDescription = null,
-            modifier = Modifier.size(rDP(14.dp))
-        )
-        Spacer(Modifier.width(rDP(4.dp)))
-        Text(f.doc.name, style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.width(rDP(4.dp)))
-        if (f.isLoading) CircularProgressIndicator(
-            modifier = Modifier.size(rDP(12.dp)), strokeWidth = rDP(2.dp)
-        )
-        else Icon(
-            Icons.Default.ExpandMore,
-            null,
-            modifier = Modifier
-                .size(rDP(12.dp))
-                .clickable { onRemove() })
+        Icon(icon, contentDescription = null, modifier = Modifier.size(rDP(14.dp)))
+        Spacer(Modifier.width(rDP(6.dp)))
+        Text(f.doc.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        Spacer(Modifier.width(rDP(6.dp)))
+        if (f.isLoading) CircularProgressIndicator(modifier = Modifier.size(rDP(12.dp)), strokeWidth = rDP(2.dp))
+        else Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(rDP(14.dp)).clickable { onRemove() })
     }
+
+    if (showPreview) FilePreviewDialog(title = f.doc.name, body = if (f.preview.isNotBlank()) f.preview else "No preview available", onDismiss = { showPreview = false })
+}
+
+@Composable
+private fun FilePreviewDialog(title: String, body: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        title = { Text(title, style = MaterialTheme.typography.titleMedium) },
+        text = { Text(body, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Serif) }
+    )
 }
 
 // ---------------------------------------------------------------------
-//  Small reusable icon buttons
+// Small reusable icon buttons
 // ---------------------------------------------------------------------
 @Composable
-private fun Action(icon: ImageVector, desc: String, onClick: () -> Unit) {
+private fun Action(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, onClick: () -> Unit) {
     IconButton(
         onClick = onClick,
         modifier = Modifier.size(rDP(28.dp)),
@@ -327,14 +301,10 @@ private fun Action(icon: ImageVector, desc: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ActionProgress(
-    icon: ImageVector, desc: String, show: Boolean, onClick: () -> Unit
-) {
+private fun ActionProgress(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, show: Boolean, onClick: () -> Unit) {
     Box(contentAlignment = Alignment.Center) {
         AnimatedVisibility(show) {
-            CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.onPrimary, strokeWidth = rDP(2.dp)
-            )
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, strokeWidth = rDP(2.dp))
         }
         IconButton(
             onClick = onClick,
@@ -344,10 +314,8 @@ private fun ActionProgress(
                 contentColor = MaterialTheme.colorScheme.primary
             )
         ) {
-            AnimatedContent(show) { running ->
-                if (running) Icon(Icons.Default.Stop, desc) else Icon(
-                    icon, desc, modifier = Modifier.size(rDP(14.dp))
-                )
+            AnimatedContent(show, label = "sendStop") { running ->
+                if (running) Icon(Icons.Default.Stop, desc) else Icon(icon, desc, modifier = Modifier.size(rDP(14.dp)))
             }
         }
     }

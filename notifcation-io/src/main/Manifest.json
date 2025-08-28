@@ -1,0 +1,10 @@
+{
+  "name": "Notification-IO",
+  "description": "A Plugin For Notification Operations & Actions",
+  "mainClass" : "com.mp.notification_io.NotifyIOPlugin",
+  "tools": [
+    {
+      "toolName" : ""
+    }
+  ]
+}

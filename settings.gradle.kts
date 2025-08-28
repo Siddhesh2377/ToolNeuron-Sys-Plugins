@@ -20,6 +20,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Neuro-V-Sys-Plugins"
-include(":demo-macro")
+include(":notifcation-io")
 include(":app-io")
 include(":ai-chat")
+include(":web-searching")

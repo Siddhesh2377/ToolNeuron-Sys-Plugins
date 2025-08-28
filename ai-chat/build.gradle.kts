@@ -44,7 +44,7 @@ android {
 }
 
 dependencies {
-    compileOnly(files("libs/plugins-release.aar"))
+    compileOnly(files("libs/plugins-neuroV-release.aar"))
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
     implementation("org.jetbrains.kotlin:kotlin-stdlib-common")
