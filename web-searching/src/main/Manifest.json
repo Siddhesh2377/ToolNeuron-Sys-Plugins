@@ -1,0 +1,14 @@
+{
+  "name": "Web-Searching",
+  "description": "A Plugin For Doing WebSearch Operations",
+  "mainClass" : "com.mp.web_searching.WebPlugin",
+  "tools": [
+    {
+      "toolName" : "searchWeb",
+      "path": "com.mp.web_searching.WebPlugin.searchWeb",
+      "args" : {
+        "query": "String"
+      }
+    }
+  ]
+}
