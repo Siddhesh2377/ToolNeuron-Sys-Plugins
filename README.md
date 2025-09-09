@@ -1,4 +1,4 @@
-# Neuro-V-Sys Plugins Project
+# ToolNeuron-Sys Plugins Project
 
 Modular plugin set for the NeuroVerse ecosystem. Each plugin is an Android library that can be built, tested, and packaged independently, then loaded by a host app via a lightweight Plugin API and a `Manifest.json` entry file.
 
