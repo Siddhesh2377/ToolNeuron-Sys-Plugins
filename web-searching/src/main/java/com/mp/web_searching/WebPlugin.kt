@@ -1,18 +1,21 @@
 package com.mp.web_searching
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.Keep
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -54,20 +57,17 @@ class WebPlugin(context: Context) : PluginApi(context) {
     private val moshi: Moshi by lazy {
         Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
     }
+    private val searchAdapter by lazy { moshi.adapter(SearchResponse::class.java) }
+    private val pageAdapter by lazy { moshi.adapter(PageSummary::class.java) }
 
     // ------------------ Scope / lifecycle ------------------
 
     private val job = SupervisorJob()
     private val ioScope = CoroutineScope(job + Dispatchers.IO)
 
-    override fun onCreate(data: Any) {
-        super.onCreate(data)
-        Log.d(TAG, "onCreate called")
-    }
-
     override fun onDestroy() {
         super.onDestroy()
-        job.cancel() // cancel any in-flight work
+        job.cancel()
         Log.d(TAG, "onDestroy: scope cancelled")
     }
 
@@ -76,7 +76,8 @@ class WebPlugin(context: Context) : PluginApi(context) {
     private sealed interface UiState {
         data object Idle : UiState
         data class Loading(val label: String) : UiState
-        data class Success(val message: String) : UiState
+        data class SearchSuccess(val data: SearchResponse) : UiState
+        data class FetchSuccess(val data: PageSummary) : UiState
         data class Error(val message: String) : UiState
     }
 
@@ -84,7 +85,8 @@ class WebPlugin(context: Context) : PluginApi(context) {
     private val uiState = _uiState.asStateFlow()
 
     private fun setLoading(label: String) = _uiState.update { UiState.Loading(label) }
-    private fun setSuccess(msg: String) = _uiState.update { UiState.Success(msg) }
+    private fun setSearchSuccess(data: SearchResponse) = _uiState.update { UiState.SearchSuccess(data) }
+    private fun setFetchSuccess(data: PageSummary) = _uiState.update { UiState.FetchSuccess(data) }
     private fun setError(msg: String) = _uiState.update { UiState.Error(msg) }
 
     // ------------------ Compose UI ------------------
@@ -93,49 +95,81 @@ class WebPlugin(context: Context) : PluginApi(context) {
     @Composable
     override fun AppContent() {
         val state by uiState.collectAsState()
+        val ctx = LocalContext.current
 
         Surface(modifier = Modifier.fillMaxWidth()) {
             Column(
-                modifier = Modifier
-                    .padding(16.dp),
+                modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("Web Plugin", style = MaterialTheme.typography.titleLarge)
 
-                // Quick test buttons (optional helpers)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = {
-                            // Quick sample search to demonstrate UI reactivity
-                            ioScope.launch {
-                                val json = searchWeb("android compose performance", limit = 5)
-                                setSuccess(json)
-                            }
-                            setLoading("Searching…")
-                        }
-                    ) { Text("Sample Search") }
+                // STATUS CHIP (replaces title)
+                StatusChip(state)
 
-                    Button(
-                        onClick = {
-                            ioScope.launch {
-                                val res = fetchAndSummarize("https://developer.android.com/jetpack/compose")
-                                setSuccess(res)
-                            }
-                            setLoading("Fetching page…")
-                        }
-                    ) { Text("Sample Fetch") }
-                }
-
-                // Status card
+                // CONTENT AREA
                 when (val s = state) {
-                    UiState.Idle -> AssistCard("Idle", "Call a tool (searchWeb/fetchPage) to see results here.")
+                    UiState.Idle -> AssistCard(
+                        "Ready",
+                        "Call a tool (searchWeb / fetchPage) to populate results here."
+                    )
+
                     is UiState.Loading -> LoadingCard(s.label)
-                    is UiState.Success -> ResultCard("Success", s.message)
+
+                    is UiState.SearchSuccess -> {
+                        ResultMetaCard(
+                            "Search complete",
+                            "“${s.data.query}” • ${s.data.results.size} results • ${s.data.elapsed_ms} ms"
+                        )
+                        SearchResultsList(
+                            results = s.data.results,
+                            onOpen = { url -> openLink(ctx, url) }
+                        )
+                    }
+
+                    is UiState.FetchSuccess -> {
+                        ResultMetaCard("Page fetched", s.data.url)
+                        PageSummaryCard(s.data.summary)
+                    }
+
                     is UiState.Error -> ErrorCard("Error", s.message)
                 }
             }
         }
     }
+
+    @Composable
+    private fun StatusChip(state: UiState) {
+        val (label, tone) = when (state) {
+            UiState.Idle -> "Idle" to ChipTone.Neutral
+            is UiState.Loading -> "Searching…" to ChipTone.Info
+            is UiState.SearchSuccess -> "Search complete" to ChipTone.Success
+            is UiState.FetchSuccess -> "Fetch complete" to ChipTone.Success
+            is UiState.Error -> "Error" to ChipTone.Error
+        }
+        Surface(
+            color = when (tone) {
+                ChipTone.Neutral -> MaterialTheme.colorScheme.surfaceVariant
+                ChipTone.Info -> MaterialTheme.colorScheme.primaryContainer
+                ChipTone.Success -> MaterialTheme.colorScheme.tertiaryContainer
+                ChipTone.Error -> MaterialTheme.colorScheme.errorContainer
+            },
+            contentColor = when (tone) {
+                ChipTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+                ChipTone.Info -> MaterialTheme.colorScheme.onPrimaryContainer
+                ChipTone.Success -> MaterialTheme.colorScheme.onTertiaryContainer
+                ChipTone.Error -> MaterialTheme.colorScheme.onErrorContainer
+            },
+            shape = RoundedCornerShape(50),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+    }
+
+    private enum class ChipTone { Neutral, Info, Success, Error }
 
     @Composable
     private fun AssistCard(title: String, body: String) {
@@ -167,8 +201,76 @@ class WebPlugin(context: Context) : PluginApi(context) {
     }
 
     @Composable
-    private fun ResultCard(title: String, body: String) =
-        AssistCard(title, body)
+    private fun ResultMetaCard(title: String, subtitle: String) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.size(4.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+
+    @Composable
+    private fun SearchResultsList(results: List<SearchItem>, onOpen: (String) -> Unit) {
+        if (results.isEmpty()) {
+            AssistCard("No results", "Try a different query.")
+            return
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            results.forEach { item ->
+                ElevatedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onOpen(item.url) }
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(
+                            item.title.ifBlank { item.url },
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        if (item.snippet.isNotBlank()) {
+                            Text(
+                                item.snippet,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        Text(
+                            item.url.hostOrSelf(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+    }
+
+    @Composable
+    private fun PageSummaryCard(summary: String) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+        ) {
+            Text(
+                text = summary,
+                modifier = Modifier.padding(16.dp),
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
 
     @Composable
     private fun ErrorCard(title: String, body: String) =
@@ -193,12 +295,14 @@ class WebPlugin(context: Context) : PluginApi(context) {
                 val limit = args.optInt("limit", 5).coerceIn(1, 25)
                 Log.d(TAG, "runTool(searchWeb): q='$query', limit=$limit")
 
-                setLoading("Searching web…")
+                setLoading("Searching…")
                 ioScope.launch {
                     try {
                         val json = withTimeout(15_000L) { searchWeb(query, limit) }
-                        setSuccess(json)
-                        callback(json)
+                        // parse → UI state shows “Search complete”
+                        searchAdapter.fromJson(json)?.let { setSearchSuccess(it) }
+                            ?: run { setError("Parse error") }
+                        callback(json) // keep raw json for caller
                     } catch (t: Throwable) {
                         val msg = "searchWeb failed: ${t.message ?: t::class.java.simpleName}"
                         Log.w(TAG, msg, t)
@@ -216,7 +320,8 @@ class WebPlugin(context: Context) : PluginApi(context) {
                 ioScope.launch {
                     try {
                         val res = withTimeout(15_000L) { fetchAndSummarize(url) }
-                        setSuccess(res)
+                        pageAdapter.fromJson(res)?.let { setFetchSuccess(it) }
+                            ?: run { setError("Parse error") }
                         callback(res)
                     } catch (t: Throwable) {
                         val msg = "fetchPage failed: ${t.message ?: t::class.java.simpleName}"
@@ -253,11 +358,14 @@ class WebPlugin(context: Context) : PluginApi(context) {
         val elapsed_ms: Long
     )
 
+    @JsonClass(generateAdapter = true)
+    data class PageSummary(
+        val url: String,
+        val summary: String
+    )
+
     // ------------------ Public functions used by tools ------------------
 
-    /**
-     * Simple, reliable web search via DuckDuckGo's lightweight HTML.
-     */
     suspend fun searchWeb(query: String, limit: Int = 5): String = withContext(Dispatchers.IO) {
         require(query.isNotBlank()) { "Query must not be blank" }
 
@@ -267,7 +375,7 @@ class WebPlugin(context: Context) : PluginApi(context) {
         val url = "https://duckduckgo.com/html/".toUri()
             .buildUpon()
             .appendQueryParameter("q", query)
-            .appendQueryParameter("kl", "in-en") // locale hint (India/English)
+            .appendQueryParameter("kl", "in-en")
             .appendQueryParameter("ia", "web")
             .build()
             .toString()
@@ -282,24 +390,17 @@ class WebPlugin(context: Context) : PluginApi(context) {
         val body = client.newCall(req).execute().use { resp ->
             ensureSuccess(resp)
             val str = resp.body?.string().orEmpty()
-            // Avoid extreme memory use on unexpected responses
             str.take(MAX_HTML_CHARS)
         }
 
         val doc: Document = Jsoup.parse(body)
-        // DDG HTML varies — try a few structures
-        val resultEls = doc.select(
-            "div.result, div.results_links, div.result__body, article[data-nrn]"
-        )
+        val resultEls = doc.select("div.result, div.results_links, div.result__body, article[data-nrn]")
 
         val items = mutableListOf<SearchItem>()
         for (el in resultEls) {
             if (items.size >= limit) break
 
-            val titleEl = el.selectFirst(
-                "a.result__a, a.result__title, a[data-testid=ResultTitle], h2 a"
-            ) ?: continue
-
+            val titleEl = el.selectFirst("a.result__a, a.result__title, a[data-testid=ResultTitle], h2 a") ?: continue
             val rawHref = titleEl.attr("href").trim()
             val title = titleEl.text().trim()
             val snippet = el.selectFirst(
@@ -317,21 +418,9 @@ class WebPlugin(context: Context) : PluginApi(context) {
         }
 
         val elapsed = System.currentTimeMillis() - started
-        val adapter = moshi.adapter(SearchResponse::class.java)
-        val json = adapter.toJson(
-            SearchResponse(
-                query = query,
-                results = items,
-                elapsed_ms = elapsed
-            )
-        )
-        Log.d(TAG, "searchWeb() parsed ${items.size} results in ${elapsed}ms")
-        json
+        searchAdapter.toJson(SearchResponse(query = query, results = items, elapsed_ms = elapsed))
     }
 
-    /**
-     * Fetch a page and return a short plaintext summary (very basic).
-     */
     suspend fun fetchAndSummarize(url: String, maxChars: Int = 1200): String = withContext(Dispatchers.IO) {
         require(url.startsWith("http")) { "URL must start with http/https" }
 
@@ -344,7 +433,7 @@ class WebPlugin(context: Context) : PluginApi(context) {
 
         val html = client.newCall(req).execute().use { resp ->
             ensureSuccess(resp)
-            resp.body?.string().orEmpty().take(MAX_HTML_CHARS)
+            resp.body.string().orEmpty().take(MAX_HTML_CHARS)
         }
 
         val doc = Jsoup.parse(html)
@@ -352,19 +441,17 @@ class WebPlugin(context: Context) : PluginApi(context) {
         val text = main.text().trim()
         val compact = text.replace(Regex("\\s+"), " ").take(maxChars)
 
-        """{"url":"${escape(url)}","summary":"${escape(compact)}"}"""
+        pageAdapter.toJson(PageSummary(url = url, summary = compact))
     }
 
     // ------------------ Helpers ------------------
 
     private fun cleanDuckDuckGoUrl(raw: String): String = try {
-        val uri = Uri.parse(raw)
-        // DDG often wraps external links like: /l/?uddg=<encodedUrl>&rut=...
+        val uri = raw.toUri()
         if (uri.path?.startsWith("/l/") == true) {
             val uddg = uri.getQueryParameter("uddg")
-            if (!uddg.isNullOrBlank()) URLDecoder.decode(uddg, "UTF-8") else raw
+            if (!uddg.isNullOrBlank()) java.net.URLDecoder.decode(uddg, "UTF-8") else raw
         } else {
-            // If it already looks like a full URL, keep; else try to prefix
             when {
                 raw.startsWith("http") -> raw
                 raw.startsWith("//") -> "https:$raw"
@@ -381,16 +468,26 @@ class WebPlugin(context: Context) : PluginApi(context) {
         }
     }
 
-    private fun escape(s: String): String =
-        s.replace("\\", "\\\\").replace("\"", "\\\"")
-
     private fun errorJson(tool: String, message: String): String =
-        """{"tool":"${escape(tool)}","error":"${escape(message)}"}"""
+        """{"tool":"${tool.replace("\"", "\\\"")}","error":"${message.replace("\"", "\\\"")}"}"""
+
+    private fun openLink(ctx: Context, url: String) {
+        try {
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Throwable) {
+            // ignore
+        }
+    }
+
+    private fun String.hostOrSelf(): String = try {
+        val u = this.toUri()
+        (u.host ?: this).removePrefix("www.")
+    } catch (_: Exception) { this }
 
     companion object {
         private const val TAG = "WebPlugin"
         private const val UA =
             "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
-        private const val MAX_HTML_CHARS = 500_000 // defensive bound
+        private const val MAX_HTML_CHARS = 500_000
     }
 }
